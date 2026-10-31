@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Break the Bot</title>
+<style>
+  :root { --bg:#0f1220; --card:#181c30; --line:#2a2f4d; --text:#e8eaf6; --muted:#9aa0c3;
+          --accent:#7c5cff; --good:#2ecc71; --bad:#ff5c7a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text);
+         display:flex; justify-content:center; padding:16px; }
+  .app { width:100%; max-width:720px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:1.3rem; margin:0; }
+  .meta { color:var(--muted); font-size:.9rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:12px; }
+  #log { height:340px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+  .msg { padding:8px 12px; border-radius:10px; max-width:85%; white-space:pre-wrap; word-wrap:break-word; }
+  .you { align-self:flex-end; background:var(--accent); }
+  .bot { align-self:flex-start; background:#232848; }
+  .sys { align-self:center; color:var(--muted); font-size:.85rem; text-align:center; }
+  .row { display:flex; gap:8px; margin-top:10px; }
+  input { flex:1; min-width:0; padding:10px; border-radius:8px; border:1px solid var(--line);
+          background:#10132a; color:var(--text); font-size:1rem; }
+  button { padding:10px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff;
+           font-size:1rem; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--muted); }
+  button:disabled { opacity:.5; cursor:wait; }
+  #status { min-height:1.4em; margin-top:8px; }
+  .good { color:var(--good); }
+  .bad { color:var(--bad); }
+  #win { text-align:center; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Break the Bot</h1>
+    <div class="meta"><span id="level-title">Loading...</span> &middot; Messages sent: <span id="attempts">0</span></div>
+  </header>
+
+  <div id="game">
+    <div class="card">
+      <div id="log"></div>
+      <form id="chat-form" class="row">
+        <input id="chat-input" placeholder="Trick the guard into saying the secret word..." autocomplete="off" maxlength="500">
+        <button id="send">Send</button>
+      </form>
+    </div>
+    <div class="card">
+      <div>Got the secret word? Type it here:</div>
+      <form id="guess-form" class="row">
+        <input id="guess-input" placeholder="Secret word" autocomplete="off">
+        <button>Submit</button>
+        <button type="button" class="ghost" id="hint-btn">Hint</button>
+      </form>
+      <div id="status"></div>
+    </div>
+  </div>
+
+  <div id="win" class="card" hidden>
+    <h2>You broke every guard!</h2>
+    <p id="win-text"></p>
+    <button id="restart">Play again</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let level = 1, total = 4, attempts = 0, totalAttempts = 0, history = [], hint = "", busy = false;
+
+function addMsg(kind, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + kind;
+  d.textContent = text;            // textContent (not innerHTML) keeps player input safe
+  $("log").appendChild(d);
+  $("log").scrollTop = $("log").scrollHeight;
+  return d;
+}
+
+function setStatus(text, cls = "") {
+  $("status").textContent = text;
+  $("status").className = cls;
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { ok: r.ok, data: await r.json() };
+}
+
+async function loadLevel() {
+  const r = await fetch(`/api/level/${level}`);
+  const info = await r.json();
+  total = info.total;
+  hint = info.hint;
+  $("level-title").textContent = `${info.title} (${level}/${total})`;
+  $("log").innerHTML = "";
+  history = [];
+  attempts = 0;
+  $("attempts").textContent = 0;
+  setStatus("");
+  addMsg("sys", "The guard is waiting. Try to make it say the secret word.");
+}
+
+$("chat-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const text = $("chat-input").value.trim();
+  if (!text || busy) return;
+  $("chat-input").value = "";
+  addMsg("you", text);
+  history.push({ role: "user", content: text });
+  attempts++;
+  $("attempts").textContent = attempts;
+
+  busy = true;
+  $("send").disabled = true;
+  const thinking = addMsg("sys", "Guard is thinking...");
+  try {
+    const { ok, data } = await post("/api/chat", { level, messages: history });
+    thinking.remove();
+    if (!ok) {
+      addMsg("sys", "Error: " + (data.detail || "Something went wrong."));
+      history.pop();
+    } else {
+      addMsg(data.blocked ? "sys" : "bot", data.reply);
+      history.push({ role: "assistant", content: data.reply });
+    }
+  } catch (err) {
+    thinking.remove();
+    addMsg("sys", "Error: could not reach the server.");
+    history.pop();
+  }
+  busy = false;
+  $("send").disabled = false;
+  $("chat-input").focus();
+});
+
+$("guess-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const guess = $("guess-input").value.trim();
+  if (!guess) return;
+  const { data } = await post("/api/guess", { level, guess });
+  $("guess-input").value = "";
+  if (data.correct) {
+    totalAttempts += attempts;
+    if (level >= total) {
+      $("game").hidden = true;
+      $("win").hidden = false;
+      $("win-text").textContent = `You cracked all ${total} levels using ${totalAttempts} messages.`;
+    } else {
+      level++;
+      await loadLevel();
+      setStatus("Level cleared! The next guard is tougher.", "good");
+    }
+  } else {
+    setStatus("That's not the secret word. Keep trying.", "bad");
+  }
+});
+
+$("hint-btn").addEventListener("click", () => setStatus("Hint: " + hint));
+
+$("restart").addEventListener("click", async () => {
+  level = 1;
+  totalAttempts = 0;
+  $("win").hidden = true;
+  $("game").hidden = false;
+  await loadLevel();
+});
+
+loadLevel();
+</script>
+</body>
+</html>
