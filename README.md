@@ -17,7 +17,7 @@ you feel it first-hand, and see which defenses actually help.
 ## Requirements
 
 - Python 3.10+
-- [Ollama](https://ollama.com/download) with the model pulled: `ollama pull gemma3:1b`
+- [Ollama](https://ollama.com/download) with the model pulled: `ollama pull gemma4:e2b`
 
 ## Setup
 
